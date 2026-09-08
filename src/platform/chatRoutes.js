@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { runAgent } from '../services/agentService.js';
+import { embed } from '../services/modelClient.js';
 import { requirePermission } from './identity.js';
 
 const listQuerySchema = z.object({
@@ -85,6 +86,38 @@ function eventToStep(event, sequence) {
   if (event.msgStatus === 'FINISHED') return { sequence, kind: 'answer', name: 'finish', status: 'completed', input: {}, output: { evaluation: event.evaluation || null }, durationMs: null };
   if (content?.history) return { sequence, kind: 'model', name: 'answer-chunk', status: 'completed', input: {}, output: { content: content.content }, durationMs: null };
   return { sequence, kind: 'planning', name: 'progress', status: 'completed', input: {}, output: { content: content?.content || '' }, durationMs: null };
+}
+
+function toVectorLiteral(vector) {
+  return `[${vector.map((item) => Number(item).toFixed(8)).join(',')}]`;
+}
+
+async function retrieveKnowledge(database, userId, query) {
+  const available = await database.query(`
+    SELECT 1
+    FROM knowledge_bases
+    JOIN knowledge_documents ON knowledge_documents.knowledge_base_id = knowledge_bases.id
+    WHERE knowledge_bases.owner_id = $1 AND knowledge_documents.status = 'ready'
+    LIMIT 1
+  `, [userId]);
+  if (!available.rowCount) return [];
+
+  const vector = await embed(query);
+  const result = await database.query(`
+    SELECT knowledge_chunks.content, knowledge_documents.file_name AS "fileName",
+      CASE
+        WHEN $2::vector IS NOT NULL AND knowledge_chunks.embedding IS NOT NULL
+          THEN 1 - (knowledge_chunks.embedding <=> $2::vector)
+        ELSE ts_rank(to_tsvector('simple', knowledge_chunks.content), plainto_tsquery('simple', $3))
+      END AS score
+    FROM knowledge_chunks
+    JOIN knowledge_documents ON knowledge_documents.id = knowledge_chunks.document_id
+    JOIN knowledge_bases ON knowledge_bases.id = knowledge_documents.knowledge_base_id
+    WHERE knowledge_bases.owner_id = $1 AND knowledge_documents.status = 'ready'
+    ORDER BY score DESC, knowledge_chunks.chunk_index ASC
+    LIMIT 5
+  `, [userId, vector ? toVectorLiteral(vector) : null, query]);
+  return result.rows;
 }
 
 export async function registerChatRoutes(app, { database, store }) {
@@ -232,6 +265,12 @@ export async function registerChatRoutes(app, { database, store }) {
       VALUES ($1, $2, $3, $4, 'running', $5, $6, now()) RETURNING id
     `, [session.id, request.user.sub, agent.id, input.input, agent.modelProvider, agent.modelKey]);
     const runId = createdRun.rows[0].id;
+    let knowledgeContext = [];
+    try {
+      knowledgeContext = await retrieveKnowledge(database, request.user.sub, input.input);
+    } catch (error) {
+      request.log.warn({ err: error, runId }, '知识库检索失败，继续执行 Agent');
+    }
     const controller = new AbortController();
     activeRuns.set(runId, { controller, userId: request.user.sub });
 
@@ -241,7 +280,30 @@ export async function registerChatRoutes(app, { database, store }) {
     let sequence = 0;
     const startedAt = Date.now();
     try {
-      for await (const event of runAgent({ store, account: request.user.sub, question: input.input, skillNames: input.skillNames, sessionId: session.id, signal: controller.signal })) {
+      if (knowledgeContext.length) {
+        const retrievalStep = {
+          sequence: ++sequence,
+          kind: 'tool',
+          name: 'platform_knowledge_retrieval',
+          status: 'completed',
+          input: { query: input.input },
+          output: { count: knowledgeContext.length, files: knowledgeContext.map((item) => item.fileName) },
+          durationMs: null,
+        };
+        await database.query(`
+          INSERT INTO agent_run_steps (run_id, sequence, kind, name, status, input, output, duration_ms)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `, [runId, retrievalStep.sequence, retrievalStep.kind, retrievalStep.name, retrievalStep.status, JSON.stringify(retrievalStep.input), JSON.stringify(retrievalStep.output), retrievalStep.durationMs]);
+        writeSse(reply, {
+          resultType: 'agent',
+          msgStatus: 'GENERATING',
+          platformRunId: runId,
+          sessionId: session.id,
+          seq: sequence,
+          contents: [{ type: 0, history: false, content: `已从用户知识库检索到 ${knowledgeContext.length} 段相关内容。` }],
+        });
+      }
+      for await (const event of runAgent({ store, account: request.user.sub, question: input.input, skillNames: input.skillNames, sessionId: session.id, signal: controller.signal, knowledgeContext })) {
         const content = event.contents?.[0];
         if (content?.type === 0 && content.history) answer += content.content;
         const step = eventToStep(event, ++sequence);

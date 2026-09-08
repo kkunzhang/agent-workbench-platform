@@ -23,7 +23,7 @@
 | GET | `/api/v1/sessions` | `agent:read` | 分页、关键词查询会话。 |
 | PATCH | `/api/v1/sessions/:id` | `agent:run` | 重命名、置顶、归档或删除。 |
 | GET | `/api/v1/sessions/:id/messages` | `agent:read` | 会话消息。 |
-| POST | `/api/v1/chat/runs` | `agent:run` | 创建 Agent Run，响应为 SSE。 |
+| POST | `/api/v1/chat/runs` | `agent:run` | 创建 Agent Run，自动注入当前用户命中的知识库片段，响应为 SSE。 |
 | POST | `/api/v1/chat/runs/:id/cancel` | `agent:run` | 取消仍在运行的 Agent Run。 |
 | POST/DELETE | `/api/v1/favorites` | `agent:read` | 收藏或取消收藏会话。 |
 | POST | `/api/v1/feedback` | `agent:read` | 对回答点赞或点踩。 |

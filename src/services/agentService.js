@@ -124,7 +124,7 @@ async function runMultiAgent(question, context, trace, signal) {
     : result;
 }
 
-export async function* runAgent({ store, account, question, skillNames = [], sessionId, signal }) {
+export async function* runAgent({ store, account, question, skillNames = [], sessionId, signal, knowledgeContext = [] }) {
   const startedAt = Date.now();
   throwIfAborted(signal);
   const selectedSkills = skillNames.map((name) => SKILLS[name]).filter(Boolean);
@@ -132,6 +132,9 @@ export async function* runAgent({ store, account, question, skillNames = [], ses
   const trace = startTrace({ account, sessionId, question, plan });
   const toolCalls = [];
   const sessionMemories = await recall(store, account, question);
+  const retrievedKnowledge = knowledgeContext
+    .map((item) => `来源：${item.fileName}\n${item.content}`)
+    .join('\n\n');
   addSpan(trace, {
     kind: 'planning',
     name: 'deterministic-planner',
@@ -141,6 +144,16 @@ export async function* runAgent({ store, account, question, skillNames = [], ses
   });
 
   yield createProgressEvent(`已生成执行计划：${plan.steps.map((step) => step.title).join(' → ')}`);
+  if (retrievedKnowledge) {
+    addSpan(trace, {
+      kind: 'tool',
+      name: 'platform_knowledge_retrieval',
+      input: { query: question, count: knowledgeContext.length },
+      output: retrievedKnowledge,
+      attributes: { source: 'postgres-pgvector' },
+    });
+    yield createProgressEvent(`已加载用户知识库的 ${knowledgeContext.length} 段相关内容。`);
+  }
 
   for (const step of plan.steps.filter((item) => item.kind === 'tool')) {
     throwIfAborted(signal);
@@ -175,6 +188,7 @@ export async function* runAgent({ store, account, question, skillNames = [], ses
   throwIfAborted(signal);
 
   const memoryContext = sessionMemories.length ? `\n长期记忆：${sessionMemories.map((item) => item.text).join('\n')}` : '';
+  const knowledgeContextText = retrievedKnowledge ? `\n用户知识库检索结果：\n${retrievedKnowledge}` : '';
   const evidence = summarizeEvidence(toolCalls);
   const toolContext = evidence ? `\n已执行工具与结果：\n${evidence}` : '';
   const skillContext = selectedSkills.length ? `\n已选择技能：${selectedSkills.join('\n')}` : '';
@@ -186,11 +200,11 @@ export async function* runAgent({ store, account, question, skillNames = [], ses
     result = { text: deterministicAnswer, source: 'tool' };
   } else if (shouldDelegate) {
     yield createProgressEvent('正在并发执行规划与审阅子 Agent。');
-    result = await runMultiAgent(question, `${planContext}${memoryContext}${toolContext}${skillContext}`, trace, signal);
+    result = await runMultiAgent(question, `${planContext}${memoryContext}${knowledgeContextText}${toolContext}${skillContext}`, trace, signal);
   } else {
     yield createProgressEvent('正在基于已执行证据生成最终回答。');
     const modelStartedAt = Date.now();
-    result = await generateAnswer({ system: `${BASE_SYSTEM_PROMPT}${planContext}${memoryContext}${toolContext}${skillContext}`, question, signal });
+    result = await generateAnswer({ system: `${BASE_SYSTEM_PROMPT}${planContext}${memoryContext}${knowledgeContextText}${toolContext}${skillContext}`, question, signal });
     throwIfAborted(signal);
     addSpan(trace, { kind: 'model', name: 'answer', input: question, output: result.text, durationMs: Date.now() - modelStartedAt, attributes: { source: result.source } });
   }
