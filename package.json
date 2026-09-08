@@ -1,0 +1,36 @@
+{
+  "name": "yagent-agent-platform",
+  "version": "0.2.0",
+  "description": "A self-hosted, observable Agent platform backend for chat, tools, MCP, memory and evaluation.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "db:up": "docker compose up -d postgres redis minio",
+    "db:down": "docker compose down",
+    "db:migrate": "node src/platform/migrate.js",
+    "check": "node --check src/index.js && node --check src/services/agentService.js && node --check src/services/toolService.js && node --check src/services/evalSuiteService.js && node --check src/mcp/demoMcpServer.js && node --check src/platform/identity.js && node --check src/platform/chatRoutes.js && node --check src/platform/runtimeRoutes.js",
+    "test": "node --test",
+    "mcp:demo": "node src/mcp/demoMcpServer.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.1.0",
+    "@fastify/jwt": "^10.2.2",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^16.5.0",
+    "fastify": "^5.3.3",
+    "pg": "^8.23.0",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.0",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  }
+}

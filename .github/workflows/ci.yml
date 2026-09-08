@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: docker compose config
+
+  platform-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: agent_platform
+          POSTGRES_USER: agent
+          POSTGRES_PASSWORD: agent_dev_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agent -d agent_platform"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://agent:agent_dev_password@127.0.0.1:5432/agent_platform
+      JWT_SECRET: ci-only-development-secret
+      ENABLE_DEMO_LOGIN: 'true'
+      LLM_PROVIDER: ollama
+      OLLAMA_BASE_URL: http://127.0.0.1:9
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run db:migrate
+      - run: npm start > platform.log 2>&1 &
+      - run: |
+          for attempt in {1..20}; do
+            curl --fail --silent http://127.0.0.1:8788/api/v1/platform/health && break
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8788/api/v1/platform/health > /dev/null || (cat platform.log && exit 1)
+      - run: |
+          curl --fail --silent --show-error -X POST http://127.0.0.1:8788/api/v1/auth/demo-login \
+            -H 'content-type: application/json' > login.json
+          node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync('login.json')); const token=data.data?.accessToken; if (!token) process.exit(1); fetch('http://127.0.0.1:8788/api/v1/me',{headers:{authorization:'Bearer '+token}}).then(r=>r.json()).then(x=>{if(!x.data?.permissions?.includes('agent:run'))process.exit(1)}).catch(()=>process.exit(1));"

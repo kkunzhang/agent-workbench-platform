@@ -1,0 +1,24 @@
+import 'dotenv/config';
+
+export const config = {
+  port: Number(process.env.PORT || 8788),
+  llmProvider: process.env.LLM_PROVIDER || 'ollama',
+  ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
+  ollamaModel: process.env.OLLAMA_MODEL || 'qwen3.5:0.8b',
+  ollamaToolModel: process.env.OLLAMA_TOOL_MODEL || 'local-qwen35b-tools:latest',
+  openaiBaseUrl: process.env.OPENAI_BASE_URL || '',
+  openaiApiKey: process.env.OPENAI_API_KEY || '',
+  openaiModel: process.env.OPENAI_MODEL || '',
+  modelTimeoutMs: Number(process.env.MODEL_TIMEOUT_MS || 8000),
+  agentMaxSteps: Number(process.env.AGENT_MAX_STEPS || 4),
+  toolTimeoutMs: Number(process.env.TOOL_TIMEOUT_MS || 5000),
+  toolRetryCount: Number(process.env.TOOL_RETRY_COUNT || 1),
+  traceRetention: Number(process.env.TRACE_RETENTION || 200),
+  databaseUrl: process.env.DATABASE_URL || '',
+  jwtSecret: process.env.JWT_SECRET || 'replace-this-demo-secret-before-production',
+  accessTokenTtl: process.env.ACCESS_TOKEN_TTL || '30m',
+  refreshTokenTtlDays: Number(process.env.REFRESH_TOKEN_TTL_DAYS || 14),
+  enableDemoLogin: process.env.ENABLE_DEMO_LOGIN !== 'false',
+  demoUserEmail: process.env.DEMO_USER_EMAIL || 'demo@yagent.local',
+  demoUserPassword: process.env.DEMO_USER_PASSWORD || 'Demo123456!',
+};
