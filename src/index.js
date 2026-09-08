@@ -97,10 +97,16 @@ app.get('/health', async () => ({
   ok: true,
   provider: config.llmProvider,
   model: config.llmProvider === 'ollama' ? config.ollamaModel : config.openaiModel,
-  capabilities: ['sse', 'agent-loop', 'tool-policy', 'mcp-client', 'memory', 'pgvector-rag', 'trace', 'eval-suite'],
+  capabilities: ['sse', 'agent-loop', 'tool-policy', 'mcp-client', 'memory', 'pgvector-rag', 'web-search', 'image-search', 'isolated-sandbox', 'trace', 'eval-suite'],
   platformDatabase: 'ready',
 }));
-app.get('/api/v1/platform/health', async () => ok({ database: 'ready', identity: true, storage: 'postgresql-pgvector' }));
+app.get('/api/v1/platform/health', async () => ok({
+  database: 'ready',
+  identity: true,
+  storage: 'postgresql-pgvector',
+  webSearch: { provider: config.webSearchProvider, endpoint: config.searxngBaseUrl },
+  sandbox: { endpoint: config.sandboxBaseUrl, configured: Boolean(config.sandboxRunnerToken), isolation: 'container+vm' },
+}));
 
 // 既有 Vue 前端的兼容适配层；会话、消息、Trace 和评测仍全部写入 PostgreSQL。
 app.get('/api/lab/lessons', async () => ok([

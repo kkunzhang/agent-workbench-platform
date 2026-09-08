@@ -42,6 +42,8 @@
 
 `images` 最多 4 张、总大小不超过 12MB。Ollama 请求会映射为 `messages[].images`；OpenAI 兼容请求会映射为 `image_url` data URL。图片只用于本次模型调用，不写入对话数据库。
 
+当输入包含“联网搜索 / 搜图片”时，Agent 会执行受限工具：`web_search` 调用本地 SearXNG 并返回网页标题、摘要和来源 URL；`image_search` 返回图片 URL 和来源页。用户明确提出“沙盒运行 JavaScript：…”时，才会执行 `sandbox_javascript`。工具输入、输出摘要、超时与策略均进入 Run Trace。
+
 ## C. Runtime
 
 | 方法 | 路径 | 说明 |

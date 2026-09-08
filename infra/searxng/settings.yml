@@ -1,0 +1,18 @@
+use_default_settings: true
+
+general:
+  instance_name: yagent-local-search
+  enable_metrics: false
+
+search:
+  safe_search: 1
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "replace-this-local-searxng-secret-before-production"
+  bind_address: "0.0.0.0"
+  port: 8080
+  limiter: false
+  image_proxy: true

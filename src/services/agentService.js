@@ -3,9 +3,10 @@ import { executeTool } from './toolService.js';
 import { evaluateRun } from './evaluationService.js';
 import { buildPlan, formatPlanForPrompt } from './planningService.js';
 import { addSpan, finishTrace, startTrace } from './traceService.js';
+import { formatImageSearchAnswer } from './webSearchService.js';
 
 const BASE_SYSTEM_PROMPT = `你是 yagent Agent Workbench 的办公助手。
-回答使用中文，先给结论，再给简明依据。只使用已提供的工具结果和知识片段，不要把没有执行过的动作写成事实。遇到信息不足时明确写出缺口和下一步。`;
+回答使用中文，先给结论，再给简明依据。只使用本轮已提供的上下文、工具结果、知识片段和附件图片，不要把没有执行过的动作写成事实。遇到信息不足时明确写出缺口和下一步。`;
 
 const SKILLS = {
   'meeting-summary': '把输入整理为：结论、待办、风险、后续动作四部分。',
@@ -48,6 +49,26 @@ function answerFromDeterministicTools(toolCalls) {
   const calculator = toolCalls.find((call) => call.name === 'calculate' && call.status === 'complete');
   const knowledge = toolCalls.find((call) => call.name === 'knowledge_search' && call.status === 'complete');
   const mcpAdd = toolCalls.find((call) => call.name === 'mcp_add' && call.status === 'complete');
+  const web = toolCalls.find((call) => call.name === 'web_search' && call.status === 'complete');
+  const images = toolCalls.find((call) => call.name === 'image_search' && call.status === 'complete');
+  const sandbox = toolCalls.find((call) => call.name === 'sandbox_javascript' && call.status === 'complete');
+  if (images && toolCalls.length === 1) {
+    try {
+      const source = JSON.parse(images.result.output);
+      return formatImageSearchAnswer(source);
+    } catch {
+      return images.result.output;
+    }
+  }
+  if (web && toolCalls.length === 1) return web.result.output;
+  if (sandbox && toolCalls.length === 1) {
+    try {
+      const payload = JSON.parse(sandbox.result.output);
+      return `受限代码沙盒执行完成。\n\n结果：\`${JSON.stringify(payload.result)}\`\n耗时：${payload.durationMs}ms`;
+    } catch {
+      return sandbox.result.output;
+    }
+  }
   if (mcpAdd && knowledge) {
     return [
       `结论：本次通过真实 MCP stdio 调用得到 ${mcpAdd.args.left} + ${mcpAdd.args.right} = ${mcpAdd.result.output}。`,
@@ -132,6 +153,12 @@ export async function* runAgent({ account, question, skillNames = [], sessionId,
   const trace = startTrace({ account, sessionId, question, plan });
   const toolCalls = [];
   const sessionMemories = memoryContext;
+  const recallFromContext = async (query) => {
+    const normalized = String(query || '').toLocaleLowerCase();
+    return sessionMemories
+      .filter((item) => !normalized || String(item.content || item.text || '').toLocaleLowerCase().includes(normalized))
+      .map((item) => ({ text: item.content || item.text || '' }));
+  };
   const retrievedKnowledge = knowledgeContext
     .map((item) => `来源：${item.fileName}\n${item.content}`)
     .join('\n\n');
@@ -162,7 +189,7 @@ export async function* runAgent({ account, question, skillNames = [], sessionId,
     yield createToolEvent(call, 'running');
     const toolStartedAt = Date.now();
     try {
-      call.result = await executeTool(call, { recall: (query) => recall(store, account, query) });
+      call.result = await executeTool(call, { recall: recallFromContext });
       throwIfAborted(signal);
       call.status = 'complete';
       step.status = 'complete';

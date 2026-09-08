@@ -40,7 +40,75 @@ services:
     volumes:
       - minio-data:/data
 
+  searxng:
+    image: searxng/searxng@sha256:3547509b419cd6a67333d6d68bd1ffad8d46d3669d82e7a7bd538f7b45827432
+    environment:
+      SEARXNG_BASE_URL: ${SEARXNG_PUBLIC_BASE_URL:-http://127.0.0.1:8081/}
+    ports:
+      - '127.0.0.1:8081:8080'
+    volumes:
+      - ./infra/searxng:/etc/searxng:rw
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:8080/search?q=agent\&format=json >/dev/null 2>&1']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  sandbox:
+    build: ./sandbox
+    environment:
+      SANDBOX_RUNNER_TOKEN: ${SANDBOX_RUNNER_TOKEN:?SANDBOX_RUNNER_TOKEN is required}
+      SANDBOX_MAX_CODE_BYTES: 6000
+      SANDBOX_MAX_INPUT_BYTES: 65536
+      SANDBOX_EXECUTION_TIMEOUT_MS: 1000
+    networks:
+      - sandbox-net
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    user: '65534:65534'
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 32
+    mem_limit: 128m
+    cpus: 0.5
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:8790/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  sandbox-gateway:
+    image: nginx@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+    depends_on:
+      sandbox:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:8790:8080'
+    volumes:
+      - ./infra/sandbox-gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - default
+      - sandbox-net
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:rw,noexec,nosuid,size=8m
+      - /var/run:rw,noexec,nosuid,size=1m
+      - /tmp:rw,noexec,nosuid,size=8m
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:8080/health >/dev/null 2>&1']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
 volumes:
   postgres-data:
   redis-data:
   minio-data:
+networks:
+  sandbox-net:
+    internal: true

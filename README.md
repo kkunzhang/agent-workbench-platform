@@ -21,6 +21,8 @@ Fastify API ── PostgreSQL + pgvector ── Redis / MinIO
        ├── Identity and RBAC
        ├── Agent sessions and runs
        ├── Tool policy / MCP Client
+       ├── SearXNG web / image search
+       ├── Container sandbox (JavaScript)
        ├── Memory and knowledge retrieval
        └── Trace and evaluation
        │
@@ -52,6 +54,18 @@ curl http://127.0.0.1:8788/health
 
 开发模式可运行 `npm run dev`。数据库、缓存和对象存储通过 `docker compose` 提供；停止基础设施运行 `npm run db:down`。
 
+### 联网搜索与图片搜索
+
+`npm run db:up` 同时启动本机的 SearXNG（仅绑定 `127.0.0.1:8081`）。Agent 收到“联网搜索…”或“搜图片…”时会调用 `web_search` / `image_search`，并把标题、来源页和图片 URL 写入工具 Trace；图片搜索的最终回答会直接带可预览图片和来源链接。
+
+SearXNG 是本地的聚合器，不需要搜索 API Key，但它会访问公开搜索引擎，因此运行电脑需要联网。打开 `http://127.0.0.1:8081` 可以单独检查搜索服务。
+
+### 代码沙盒
+
+`sandbox` 执行容器通过一个仅绑定 `127.0.0.1:8790` 的网关接收后端请求。执行容器使用只读根文件系统、非 root 用户、无 Linux capabilities、进程/内存/CPU 限制和 `internal` Docker 网络；容器内再用 Node `vm` 暴露有限的 JavaScript 表达式能力。Agent 只有在用户明确要求“沙盒运行 JavaScript：…”时才会调用它。
+
+示例：`沙盒运行 JavaScript：input.values.reduce((sum, value) => sum + value, 0)`。生产多租户场景应改用 gVisor、Kata 或 Firecracker 等更强隔离方案，并把 `SANDBOX_RUNNER_TOKEN` 交给密钥管理服务；Node `vm` 本身不是安全边界。
+
 ## 本机模型与 OpenAI 兼容模型
 
 默认使用 Ollama：
@@ -80,6 +94,7 @@ OPENAI_MODEL=gpt-4.1-mini
 - [评测与可观测性](docs/evaluation-and-observability.md)
 - [面试演示提纲](docs/interview-playbook.md)
 - [面试口述要点](docs/interview-speaking-points.md)
+- [联网搜索与沙盒](docs/day-6-harness-and-evaluation.md)
 
 旧版 Vue 前端可通过 `npm run dev:agent` 启动本地 Agent 模式；平台 V1 API 使用 Bearer Token，是给新展示页或后续前端适配使用的正式接口。
 
