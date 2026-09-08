@@ -1,6 +1,6 @@
 # YAgent Agent Platform
 
-一个可自托管、可观察的 Agent 平台后端。它包含本地身份权限、SSE 对话、工具策略、真实 MCP Client、知识检索、长期记忆、执行 Trace 和固定评测集，适合用作 Agent 工程实践与公开项目展示。
+一个可自托管、可观察的 Agent 平台后端。它包含本地身份权限、SSE 对话、工具策略、真实 MCP Client、知识检索、长期记忆、执行 Trace 和固定评测集；运行状态统一存入 PostgreSQL + pgvector，不依赖本地 JSON 文件。
 
 ## 范围
 
@@ -70,6 +70,8 @@ OPENAI_MODEL=gpt-4.1-mini
 ```
 
 模型 Key 只由服务端读取，前端不会获得。
+
+`qwen3.5:0.8b` 可接收图像输入，平台 API 的 `images` 字段最多接受 4 张 PNG、JPEG 或 WebP 图片，总大小不超过 12MB。0.8B 更适合演示和轻量任务；需要更高视觉理解准确度时，可在 `.env` 将 `OLLAMA_MODEL` 改为本机已拉取的更大视觉模型，重启服务即可。
 
 ## API、文档和演示
 

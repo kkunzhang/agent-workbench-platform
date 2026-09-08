@@ -1,7 +1,6 @@
 import { generateAnswer } from './modelClient.js';
 import { executeTool } from './toolService.js';
 import { evaluateRun } from './evaluationService.js';
-import { recall, remember } from './memoryService.js';
 import { buildPlan, formatPlanForPrompt } from './planningService.js';
 import { addSpan, finishTrace, startTrace } from './traceService.js';
 
@@ -94,7 +93,7 @@ function throwIfAborted(signal) {
   }
 }
 
-async function runMultiAgent(question, context, trace, signal) {
+async function runMultiAgent(question, context, trace, signal, images) {
   const roles = [
     { role: 'planner', instruction: '你是规划 Agent。只输出目标、3 步计划和停止条件。' },
     { role: 'reviewer', instruction: '你是审阅 Agent。列出关键风险、证据缺口和是否需要并行子任务。' },
@@ -102,7 +101,7 @@ async function runMultiAgent(question, context, trace, signal) {
   const roleResults = await Promise.all(roles.map(async ({ role, instruction }) => {
     const startedAt = Date.now();
     throwIfAborted(signal);
-    const result = await generateAnswer({ system: `${BASE_SYSTEM_PROMPT}\n${instruction}\n${context}`, question, signal });
+    const result = await generateAnswer({ system: `${BASE_SYSTEM_PROMPT}\n${instruction}\n${context}`, question, signal, images });
     throwIfAborted(signal);
     addSpan(trace, { kind: 'subagent', name: role, input: question, output: result.text, durationMs: Date.now() - startedAt, attributes: { source: result.source } });
     return { role, text: result.text, source: result.source };
@@ -117,6 +116,7 @@ async function runMultiAgent(question, context, trace, signal) {
     system: `${BASE_SYSTEM_PROMPT}\n你是主 Agent。根据以下独立子 Agent 输出合成最终建议，不要重复无依据的内容。\n${roleResults.map((item) => `${item.role}：${item.text}`).join('\n\n')}`,
     question,
     signal,
+    images,
   });
   addSpan(trace, { kind: 'model', name: 'multi-agent-synthesis', input: question, output: result.text, durationMs: Date.now() - synthesisStartedAt, attributes: { source: result.source } });
   return result.source === 'fallback'
@@ -124,14 +124,14 @@ async function runMultiAgent(question, context, trace, signal) {
     : result;
 }
 
-export async function* runAgent({ store, account, question, skillNames = [], sessionId, signal, knowledgeContext = [] }) {
+export async function* runAgent({ account, question, skillNames = [], sessionId, signal, knowledgeContext = [], memoryContext = [], rememberMemory, images = [] }) {
   const startedAt = Date.now();
   throwIfAborted(signal);
   const selectedSkills = skillNames.map((name) => SKILLS[name]).filter(Boolean);
   const plan = buildPlan(question);
   const trace = startTrace({ account, sessionId, question, plan });
   const toolCalls = [];
-  const sessionMemories = await recall(store, account, question);
+  const sessionMemories = memoryContext;
   const retrievedKnowledge = knowledgeContext
     .map((item) => `来源：${item.fileName}\n${item.content}`)
     .join('\n\n');
@@ -187,7 +187,7 @@ export async function* runAgent({ store, account, question, skillNames = [], ses
 
   throwIfAborted(signal);
 
-  const memoryContext = sessionMemories.length ? `\n长期记忆：${sessionMemories.map((item) => item.text).join('\n')}` : '';
+  const memoryContextText = sessionMemories.length ? `\n长期记忆：${sessionMemories.map((item) => item.content || item.text).join('\n')}` : '';
   const knowledgeContextText = retrievedKnowledge ? `\n用户知识库检索结果：\n${retrievedKnowledge}` : '';
   const evidence = summarizeEvidence(toolCalls);
   const toolContext = evidence ? `\n已执行工具与结果：\n${evidence}` : '';
@@ -200,11 +200,11 @@ export async function* runAgent({ store, account, question, skillNames = [], ses
     result = { text: deterministicAnswer, source: 'tool' };
   } else if (shouldDelegate) {
     yield createProgressEvent('正在并发执行规划与审阅子 Agent。');
-    result = await runMultiAgent(question, `${planContext}${memoryContext}${knowledgeContextText}${toolContext}${skillContext}`, trace, signal);
+    result = await runMultiAgent(question, `${planContext}${memoryContextText}${knowledgeContextText}${toolContext}${skillContext}`, trace, signal, images);
   } else {
     yield createProgressEvent('正在基于已执行证据生成最终回答。');
     const modelStartedAt = Date.now();
-    result = await generateAnswer({ system: `${BASE_SYSTEM_PROMPT}${planContext}${memoryContext}${knowledgeContextText}${toolContext}${skillContext}`, question, signal });
+    result = await generateAnswer({ system: `${BASE_SYSTEM_PROMPT}${planContext}${memoryContextText}${knowledgeContextText}${toolContext}${skillContext}`, question, signal, images });
     throwIfAborted(signal);
     addSpan(trace, { kind: 'model', name: 'answer', input: question, output: result.text, durationMs: Date.now() - modelStartedAt, attributes: { source: result.source } });
   }
@@ -219,18 +219,14 @@ export async function* runAgent({ store, account, question, skillNames = [], ses
 
   if (/记住[:：]/.test(question)) {
     const memory = question.replace(/^.*?记住[:：]?/, '').trim();
-    if (memory) {
-      await remember(store, account, memory);
+    if (memory && rememberMemory) {
+      await rememberMemory(memory);
       addSpan(trace, { kind: 'memory', name: 'remember', input: memory, output: '已写入长期记忆' });
     }
   }
 
   const evaluation = evaluateRun({ question, answer, toolCalls, durationMs: Date.now() - startedAt, trace });
-  await store.load();
-  store.state.evaluations.push({ traceId: trace.id, question, toolCalls, evaluation });
-  store.state.evaluations = store.state.evaluations.slice(-100);
-  await store.save();
-  await finishTrace(store, trace, { status: 'completed', answer, evaluation });
+  await finishTrace(trace, { status: 'completed', answer, evaluation });
 
   yield {
     resultType: 'agent',

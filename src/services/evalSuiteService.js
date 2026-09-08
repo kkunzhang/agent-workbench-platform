@@ -1,5 +1,5 @@
 import { executeTool } from './toolService.js';
-import { evaluateRun, summarizeEvaluations } from './evaluationService.js';
+import { evaluateRun } from './evaluationService.js';
 
 const CASES = [
   { id: 'math', name: '受限计算', call: { name: 'calculate', args: { expression: '(23 + 7) * 4' } }, expected: '120' },
@@ -12,7 +12,7 @@ export function listEvalCases() {
   return CASES.map(({ call, ...item }) => ({ ...item, tool: call.name }));
 }
 
-export async function runEvalSuite(store) {
+export async function runEvalSuite() {
   const results = [];
   for (const testCase of CASES) {
     const startedAt = Date.now();
@@ -54,19 +54,5 @@ export async function runEvalSuite(store) {
       passRate: results.filter((item) => item.passed).length / results.length,
     },
   };
-  await store.load();
-  store.state.evalRuns ||= [];
-  store.state.evalRuns.unshift(run);
-  store.state.evalRuns = store.state.evalRuns.slice(0, 30);
-  await store.save();
   return run;
-}
-
-export async function getEvalReport(store) {
-  await store.load();
-  return {
-    cases: listEvalCases(),
-    runs: store.state.evalRuns || [],
-    online: summarizeEvaluations(store.state.evaluations || []),
-  };
 }

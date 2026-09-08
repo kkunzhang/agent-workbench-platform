@@ -23,7 +23,7 @@ async function requestJson(url, options, parentSignal) {
   }
 }
 
-export async function generateAnswer({ system, question, modelHint, signal }) {
+export async function generateAnswer({ system, question, modelHint, signal, images = [] }) {
   try {
     if (config.llmProvider === 'openai-compatible') {
       if (!config.openaiBaseUrl || !config.openaiApiKey || !config.openaiModel) {
@@ -37,7 +37,15 @@ export async function generateAnswer({ system, question, modelHint, signal }) {
         },
         body: JSON.stringify({
           model: modelHint || config.openaiModel,
-          messages: [{ role: 'system', content: system }, { role: 'user', content: question }],
+          messages: [
+            { role: 'system', content: system },
+            {
+              role: 'user',
+              content: images.length
+                ? [{ type: 'text', text: question }, ...images.map((image) => ({ type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } }))]
+                : question,
+            },
+          ],
           temperature: 0.2,
         }),
       }, signal);
@@ -51,7 +59,7 @@ export async function generateAnswer({ system, question, modelHint, signal }) {
         model: modelHint || config.ollamaModel,
         stream: false,
         think: false,
-        messages: [{ role: 'system', content: system }, { role: 'user', content: question }],
+        messages: [{ role: 'system', content: system }, { role: 'user', content: question, ...(images.length ? { images: images.map((image) => image.data) } : {}) }],
         options: { temperature: 0.2 },
       }),
     }, signal);

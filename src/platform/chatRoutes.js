@@ -19,6 +19,13 @@ const createRunSchema = z.object({
   sessionId: z.string().uuid().optional(),
   input: z.string().trim().min(1).max(20_000),
   skillNames: z.array(z.string().max(80)).max(8).default([]),
+  images: z.array(z.object({
+    data: z.string().min(16).max(7_000_000),
+    mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp']),
+  })).max(4).default([]),
+}).superRefine((value, context) => {
+  const totalBytes = value.images.reduce((total, image) => total + Math.floor(image.data.length * 0.75), 0);
+  if (totalBytes > 12 * 1024 * 1024) context.addIssue({ code: z.ZodIssueCode.custom, message: '图片总大小不能超过 12MB' });
 });
 const feedbackSchema = z.object({ messageId: z.string().uuid(), rating: z.enum(['like', 'dislike']), reason: z.string().trim().max(500).optional() });
 const favoriteSchema = z.object({ sessionId: z.string().uuid() });
@@ -120,7 +127,31 @@ async function retrieveKnowledge(database, userId, query) {
   return result.rows;
 }
 
-export async function registerChatRoutes(app, { database, store }) {
+async function retrieveMemories(database, userId, query) {
+  const vector = await embed(query);
+  const result = await database.query(`
+    SELECT content, source, created_at AS "createdAt",
+      CASE WHEN $2::vector IS NOT NULL AND embedding IS NOT NULL
+        THEN 1 - (embedding <=> $2::vector)
+        ELSE ts_rank(to_tsvector('simple', content), plainto_tsquery('simple', $3))
+      END AS score
+    FROM user_memories
+    WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > now())
+    ORDER BY score DESC, created_at DESC
+    LIMIT 3
+  `, [userId, vector ? toVectorLiteral(vector) : null, query]);
+  return result.rows.filter((item) => Number(item.score) > 0);
+}
+
+async function persistMemory(database, userId, content) {
+  const vector = await embed(content);
+  await database.query(
+    'INSERT INTO user_memories (user_id, content, embedding) VALUES ($1, $2, $3::vector)',
+    [userId, content, vector ? toVectorLiteral(vector) : null],
+  );
+}
+
+export async function registerChatRoutes(app, { database }) {
   const activeRuns = new Map();
   app.get('/api/v1/agents', { preHandler: requirePermission('agent:read') }, async () => {
     const result = await database.query(`
@@ -266,10 +297,14 @@ export async function registerChatRoutes(app, { database, store }) {
     `, [session.id, request.user.sub, agent.id, input.input, agent.modelProvider, agent.modelKey]);
     const runId = createdRun.rows[0].id;
     let knowledgeContext = [];
+    let memoryContext = [];
     try {
-      knowledgeContext = await retrieveKnowledge(database, request.user.sub, input.input);
+      [knowledgeContext, memoryContext] = await Promise.all([
+        retrieveKnowledge(database, request.user.sub, input.input),
+        retrieveMemories(database, request.user.sub, input.input),
+      ]);
     } catch (error) {
-      request.log.warn({ err: error, runId }, '知识库检索失败，继续执行 Agent');
+      request.log.warn({ err: error, runId }, '上下文检索失败，继续执行 Agent');
     }
     const controller = new AbortController();
     activeRuns.set(runId, { controller, userId: request.user.sub });
@@ -303,7 +338,17 @@ export async function registerChatRoutes(app, { database, store }) {
           contents: [{ type: 0, history: false, content: `已从用户知识库检索到 ${knowledgeContext.length} 段相关内容。` }],
         });
       }
-      for await (const event of runAgent({ store, account: request.user.sub, question: input.input, skillNames: input.skillNames, sessionId: session.id, signal: controller.signal, knowledgeContext })) {
+      for await (const event of runAgent({
+        account: request.user.sub,
+        question: input.input,
+        skillNames: input.skillNames,
+        images: input.images,
+        sessionId: session.id,
+        signal: controller.signal,
+        knowledgeContext,
+        memoryContext,
+        rememberMemory: (content) => persistMemory(database, request.user.sub, content),
+      })) {
         const content = event.contents?.[0];
         if (content?.type === 0 && content.history) answer += content.content;
         const step = eventToStep(event, ++sequence);

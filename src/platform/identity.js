@@ -83,7 +83,7 @@ async function issueTokens(app, database, identity, config) {
   return { accessToken, refreshToken, expiresAt: expiresAt.toISOString(), user: identity };
 }
 
-async function ensureDemoUser(database, config) {
+export async function ensureDemoUser(database, config) {
   const existing = await findUserByEmail(database, config.demoUserEmail);
   if (existing) return existing;
   const passwordHash = await bcrypt.hash(config.demoUserPassword, 12);

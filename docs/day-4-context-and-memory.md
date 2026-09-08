@@ -6,8 +6,8 @@
 
 ## 当前实现
 
-- 会话消息：`data/state.json` 的 `sessions`，用于前端历史展示。
-- 长期记忆：`memoryService.js`。写入时优先用 `nomic-embed-text` 生成向量；检索时先算余弦相似度，模型不可用时回落到词法匹配。
+- 会话消息：PostgreSQL 的 `agent_sessions` 与 `messages`，用于前端历史展示。
+- 长期记忆：PostgreSQL 的 `user_memories`。写入时使用 `nomic-embed-text` 生成向量；检索优先 pgvector 相似度，模型不可用时回落到 PostgreSQL 全文检索。
 - Context 装配：`agentService.js` 只取命中的前三条记忆，再放入模型上下文。
 - 知识库：`knowledgeService.js` 是独立于个人记忆的系统知识，用于回答 Agent 工程概念并保留证据来源。
 

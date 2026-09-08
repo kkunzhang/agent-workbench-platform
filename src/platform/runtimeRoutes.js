@@ -58,7 +58,7 @@ async function getOwnedKnowledgeBase(database, id, userId) {
   return result.rows[0] || null;
 }
 
-export async function registerRuntimeRoutes(app, { database, store, config }) {
+export async function registerRuntimeRoutes(app, { database, config }) {
   app.get('/api/v1/traces', { preHandler: requirePermission('trace:read') }, async (request, reply) => {
     const query = parse(listQuerySchema, request.query, reply);
     if (!query) return;
@@ -228,7 +228,7 @@ export async function registerRuntimeRoutes(app, { database, store, config }) {
 
   app.post('/api/v1/evaluations/runs', { preHandler: requirePermission('trace:read') }, async (request, reply) => {
     const started = await database.query(`INSERT INTO evaluation_runs (initiated_by, status) VALUES ($1, 'running') RETURNING id`, [request.user.sub]);
-    const legacyRun = await runEvalSuite(store);
+    const legacyRun = await runEvalSuite();
     const evaluationRunId = started.rows[0].id;
     for (const result of legacyRun.results) {
       const testCase = await database.query('SELECT id FROM evaluation_cases WHERE name = $1', [result.name]);

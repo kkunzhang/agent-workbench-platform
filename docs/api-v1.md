@@ -35,9 +35,12 @@
   "agentId": "UUID",
   "sessionId": "UUID，可选",
   "input": "用 MCP 计算 19 和 23，并说明 Harness 的评测方案",
-  "skillNames": ["evidence-report"]
+  "skillNames": ["evidence-report"],
+  "images": [{ "mimeType": "image/png", "data": "不含 data: 前缀的 Base64，可选" }]
 }
 ```
+
+`images` 最多 4 张、总大小不超过 12MB。Ollama 请求会映射为 `messages[].images`；OpenAI 兼容请求会映射为 `image_url` data URL。图片只用于本次模型调用，不写入对话数据库。
 
 ## C. Runtime
 
