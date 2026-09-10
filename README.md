@@ -95,6 +95,7 @@ OPENAI_MODEL=gpt-4.1-mini
 - [面试演示提纲](docs/interview-playbook.md)
 - [面试口述要点](docs/interview-speaking-points.md)
 - [联网搜索与沙盒](docs/day-6-harness-and-evaluation.md)
+- [旧 Vue 前端兼容与迁移范围](docs/frontend-compatibility.md)
 
 旧版 Vue 前端可通过 `npm run dev:agent` 启动本地 Agent 模式；平台 V1 API 使用 Bearer Token，是给新展示页或后续前端适配使用的正式接口。
 
