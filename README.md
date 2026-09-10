@@ -1,4 +1,4 @@
-# YAgent Agent Platform
+# Agent Workbench Platform
 
 一个可自托管、可观察的 Agent 平台后端。它包含本地身份权限、SSE 对话、工具策略、真实 MCP Client、知识检索、长期记忆、执行 Trace 和固定评测集；运行状态统一存入 PostgreSQL + pgvector，不依赖本地 JSON 文件。
 

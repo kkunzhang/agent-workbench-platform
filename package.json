@@ -1,5 +1,5 @@
 {
-  "name": "yagent-agent-platform",
+  "name": "agent-workbench-platform",
   "version": "0.2.0",
   "description": "A self-hosted, observable Agent platform backend for chat, tools, MCP, memory and evaluation.",
   "license": "MIT",

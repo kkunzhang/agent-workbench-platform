@@ -1,3 +1,5 @@
+name: agent-workbench-platform
+
 services:
   postgres:
     image: pgvector/pgvector:pg16

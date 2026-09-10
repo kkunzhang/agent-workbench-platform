@@ -5,7 +5,7 @@ import { buildPlan, formatPlanForPrompt } from './planningService.js';
 import { addSpan, finishTrace, startTrace } from './traceService.js';
 import { formatImageSearchAnswer } from './webSearchService.js';
 
-const BASE_SYSTEM_PROMPT = `你是 yagent Agent Workbench 的办公助手。
+const BASE_SYSTEM_PROMPT = `你是“个人 Agent 工作台”的智能助手。
 回答使用中文，先给结论，再给简明依据。只使用本轮已提供的上下文、工具结果、知识片段和附件图片，不要把没有执行过的动作写成事实。遇到信息不足时明确写出缺口和下一步。`;
 
 const SKILLS = {

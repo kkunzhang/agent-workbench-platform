@@ -25,6 +25,6 @@ export const config = {
   accessTokenTtl: process.env.ACCESS_TOKEN_TTL || '30m',
   refreshTokenTtlDays: Number(process.env.REFRESH_TOKEN_TTL_DAYS || 14),
   enableDemoLogin: process.env.ENABLE_DEMO_LOGIN !== 'false',
-  demoUserEmail: process.env.DEMO_USER_EMAIL || 'demo@yagent.local',
+  demoUserEmail: process.env.DEMO_USER_EMAIL || 'demo@agent-workbench.local',
   demoUserPassword: process.env.DEMO_USER_PASSWORD || 'Demo123456!',
 };

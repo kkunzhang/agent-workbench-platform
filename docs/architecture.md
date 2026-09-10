@@ -1,4 +1,4 @@
-# YAgent Agent Platform 架构
+# Agent Workbench Platform 架构
 
 ```text
 Client / Vue Workbench

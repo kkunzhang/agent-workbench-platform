@@ -238,8 +238,8 @@ app.get('/api/v3/robot/patterns/list', async () => ok([
   { businessId: 1, supportAppDesc: `极速 - ${config.ollamaModel}`, name: config.ollamaModel },
   { businessId: 2, supportAppDesc: '专家 - local-qwen35b-tools', name: 'local-qwen35b-tools' },
 ]));
-app.get('/api/v2/robot/list', async () => ok({ list: [{ id: robotId, robotId, name: 'Agent 学习实验室' }], total: 1 }));
-app.get('/api/v1/robot/getRobot', async () => ok({ id: robotId, robotId, name: 'Agent 学习实验室', robotName: 'Agent 学习实验室', description: '本地或 OpenAI 兼容模型驱动的 Agent 后端' }));
+app.get('/api/v2/robot/list', async () => ok({ list: [{ id: robotId, robotId, name: '个人 Agent 工作台' }], total: 1 }));
+app.get('/api/v1/robot/getRobot', async () => ok({ id: robotId, robotId, name: '个人 Agent 工作台', robotName: '个人 Agent 工作台', description: '本地或 OpenAI 兼容模型驱动的个人 Agent 工作台' }));
 app.get('/api/v3/robot/app/whitelist/check', async () => ok({ allowed: true }));
 app.get('/api/v3/robot/app/often/list', async () => ok({ list: [] }));
 app.get('/api/v3/robot/checkAiModelLimit', async () => ok({ allowed: true, dailyLimit: 999999, usedCount: 0, remaining: 999999, exceeded: false }));
@@ -355,7 +355,7 @@ app.get('/api/v3/robot/collection', async (request) => {
   `, [request.compatibilityUserId, type, title, pageSize, (page - 1) * pageSize]);
   const data = result.rows.map((item) => ({
     id: item.id, type: item.type, title: item.title || item.sessionTitle, summary: item.summary,
-    sessionId: item.sessionId, robotId, robotName: 'Agent 学习实验室', resultType: 'agent', create_time: item.create_time,
+    sessionId: item.sessionId, robotId, robotName: '个人 Agent 工作台', resultType: 'agent', create_time: item.create_time,
   }));
   return ok({ data, total: Number(result.rows[0]?.total || 0), page, pageSize });
 });
@@ -370,7 +370,7 @@ app.get('/api/v3/robot/collection/info', async (request, reply) => {
   const messages = selected.rowCount
     ? await database.query('SELECT id, role, plain_text, created_at AS "msgTime" FROM messages WHERE id = ANY($1::uuid[]) ORDER BY created_at ASC', [selected.rows.map((row) => row.messageId)])
     : await database.query('SELECT id, role, plain_text, created_at AS "msgTime" FROM messages WHERE session_id = $1 ORDER BY created_at ASC', [item.sessionId]);
-  return ok({ ...item, robotId, robotName: 'Agent 学习实验室', msg: messages.rows.map(legacyMessage) });
+  return ok({ ...item, robotId, robotName: '个人 Agent 工作台', msg: messages.rows.map(legacyMessage) });
 });
 app.delete('/api/v3/robot/collection', async (request) => {
   const ids = Array.isArray(request.body?.ids) ? request.body.ids.filter(Boolean) : [];

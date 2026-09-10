@@ -1,6 +1,6 @@
 # 旧 Vue 前端与新 Platform 后端对接
 
-本项目不再依赖原机器人服务。本地模式下，Vite 的 `/agent-lab-api` 代理将旧 Vue 的 Agent 请求转发给 `yagent-agent-platform`。
+本项目不再依赖原机器人服务。本地模式下，Vite 的 `/agent-lab-api` 代理将旧 Vue 的 Agent 请求转发给 `agent-workbench-platform`。
 
 ## 已完成映射
 

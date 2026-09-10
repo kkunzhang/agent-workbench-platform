@@ -91,7 +91,7 @@ export async function ensureDemoUser(database, config) {
     INSERT INTO users (email, display_name, password_hash)
     VALUES ($1, $2, $3)
     RETURNING id, email, display_name AS "displayName", status
-  `, [config.demoUserEmail, 'Demo Admin', passwordHash]);
+  `, [config.demoUserEmail, '个人演示账号', passwordHash]);
   await assignRole(database, created.rows[0].id, 'admin');
   return created.rows[0];
 }

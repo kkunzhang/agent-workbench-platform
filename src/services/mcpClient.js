@@ -7,7 +7,7 @@ let connection = null;
 
 async function getConnection() {
   if (connection) return connection;
-  const client = new Client({ name: 'yagent-agent-lab-client', version: '0.1.0' });
+  const client = new Client({ name: 'agent-workbench-client', version: '0.1.0' });
   const transport = new StdioClientTransport({ command: process.execPath, args: [serverPath] });
   await client.connect(transport);
   connection = { client, transport };
