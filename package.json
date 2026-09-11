@@ -10,7 +10,7 @@
     "db:up": "docker compose up -d postgres redis minio searxng sandbox sandbox-gateway",
     "db:down": "docker compose down",
     "db:migrate": "node src/platform/migrate.js",
-    "check": "node --check src/index.js && node --check src/services/agentService.js && node --check src/services/toolService.js && node --check src/services/webSearchService.js && node --check src/services/sandboxClient.js && node --check sandbox/server.js && node --check src/services/evalSuiteService.js && node --check src/mcp/demoMcpServer.js && node --check src/platform/identity.js && node --check src/platform/contextService.js && node --check src/platform/chatRoutes.js && node --check src/platform/runtimeRoutes.js",
+    "check": "node --check src/index.js && node --check src/services/agentService.js && node --check src/services/toolService.js && node --check src/services/presentationService.js && node --check src/services/webSearchService.js && node --check src/services/sandboxClient.js && node --check sandbox/server.js && node --check src/services/evalSuiteService.js && node --check src/mcp/demoMcpServer.js && node --check src/platform/identity.js && node --check src/platform/contextService.js && node --check src/platform/chatRoutes.js && node --check src/platform/runtimeRoutes.js && node --check src/platform/artifactRoutes.js",
     "test": "node --test",
     "mcp:demo": "node src/mcp/demoMcpServer.js"
   },
@@ -25,6 +25,7 @@
     "dotenv": "^16.5.0",
     "fastify": "^5.3.3",
     "pg": "^8.23.0",
+    "pptxgenjs": "^4.0.1",
     "zod": "^3.24.4"
   },
   "devDependencies": {

@@ -3,6 +3,7 @@ import { callMcpTool } from './mcpClient.js';
 import { searchKnowledge } from './knowledgeService.js';
 import { executeSandbox } from './sandboxClient.js';
 import { formatSearchForAgent, searchInternet } from './webSearchService.js';
+import { generatePresentation } from './presentationService.js';
 
 const tools = [
   { name: 'get_current_time', description: '获取当前本地时间', input: {}, policy: { sideEffect: false, timeoutMs: 1000 } },
@@ -12,6 +13,7 @@ const tools = [
   { name: 'web_search', description: '通过本地 SearXNG 联网搜索公开网页并返回来源链接', input: { query: 'string', limit: 'number' }, policy: { sideEffect: false, network: true, timeoutMs: 10_000 } },
   { name: 'image_search', description: '通过本地 SearXNG 联网搜索公开图片并返回图片 URL 与来源页', input: { query: 'string', limit: 'number' }, policy: { sideEffect: false, network: true, timeoutMs: 10_000 } },
   { name: 'sandbox_javascript', description: '在受限、无外网的容器中执行单个 JavaScript 表达式', input: { code: 'string', input: 'object' }, policy: { sideEffect: false, sandbox: 'required', network: false, timeoutMs: 3_000 } },
+  { name: 'generate_presentation', description: '生成可下载的 PowerPoint（.pptx）演示文稿', input: { request: 'string' }, policy: { sideEffect: true, timeoutMs: 20_000 } },
   { name: 'mcp_echo', description: '通过 stdio MCP Client 调用本地 MCP 回显工具', input: { text: 'string' }, policy: { sideEffect: false, timeoutMs: 5000 } },
   { name: 'mcp_add', description: '通过 stdio MCP Client 调用本地 MCP 加法工具', input: { left: 'number', right: 'number' }, policy: { sideEffect: false, timeoutMs: 5000 } },
 ];
@@ -71,6 +73,9 @@ export function parseNumberExpression(expression) {
 export function chooseTool(question) {
   const text = String(question);
   const calls = [];
+  if (/(?:pptx?|powerpoint|演示文稿|幻灯片)/i.test(text) && /(?:生成|制作|创建|做|出|给我|帮我|能)/.test(text)) {
+    calls.push({ name: 'generate_presentation', args: { request: text } });
+  }
   const searchQuery = text.replace(/^(帮我|请|麻烦)?(联网)?(搜索|搜(?:个|一下)?|查一下|查找|检索)(一下)?/i, '').trim() || text;
   if (/(图片|图像|照片|image|photo)/i.test(text) && /(联网|搜索|搜(?:个|一下)?|查一下|查找|检索)/i.test(text)) {
     calls.push({ name: 'image_search', args: { query: searchQuery, limit: 4 } });
@@ -120,6 +125,10 @@ async function executeOnce(call, context) {
   if (call.name === 'sandbox_javascript') {
     const result = await executeSandbox(call.args);
     return JSON.stringify(result);
+  }
+  if (call.name === 'generate_presentation') {
+    const artifact = await generatePresentation(call.args.request);
+    return `已生成《${artifact.topic}》PPT。\n下载： [${artifact.fileName}](${artifact.downloadPath})\n链接有效期：${config.artifactLinkTtlSeconds} 秒。`;
   }
   if (call.name === 'mcp_echo') return callMcpTool('echo', { text: call.args.text });
   if (call.name === 'mcp_add') return callMcpTool('add', call.args);

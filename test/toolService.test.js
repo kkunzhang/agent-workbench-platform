@@ -28,6 +28,12 @@ test('联网与沙盒只能通过已注册工具进入计划', () => {
   });
 });
 
+test('PPT 请求会进入文件生成工具，而不是交给模型空答', () => {
+  assert.deepEqual(chooseTool('帮我生成一个关于 Agent 工程实践的 PPT')[0], {
+    name: 'generate_presentation', args: { request: '帮我生成一个关于 Agent 工程实践的 PPT' },
+  });
+});
+
 test('搜索结果会清理危险 URL，并把图片结果渲染为来源链接与预览', () => {
   const results = normalizeSearxngResults({ results: [
     { title: '有效', img_src: 'https://image.example/cat.png', url: 'https://source.example/cat', engine: 'demo' },

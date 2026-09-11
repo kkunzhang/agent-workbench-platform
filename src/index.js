@@ -11,6 +11,7 @@ import { createDatabase } from './platform/database.js';
 import { ensureDemoUser, registerIdentityRoutes } from './platform/identity.js';
 import { registerChatRoutes } from './platform/chatRoutes.js';
 import { registerRuntimeRoutes } from './platform/runtimeRoutes.js';
+import { registerArtifactRoutes } from './platform/artifactRoutes.js';
 import { persistMemory, retrieveKnowledge, retrieveMemories } from './platform/contextService.js';
 
 const app = Fastify({ logger: true });
@@ -26,6 +27,7 @@ await database.ping();
 await registerIdentityRoutes(app, { database, config });
 await registerChatRoutes(app, { database });
 await registerRuntimeRoutes(app, { database, config });
+await registerArtifactRoutes(app);
 const compatibilityUser = await ensureDemoUser(database, config);
 const legacyActiveRuns = new Map();
 
@@ -169,7 +171,7 @@ app.get('/health', async () => ({
   ok: true,
   provider: config.llmProvider,
   model: config.llmProvider === 'ollama' ? config.ollamaModel : config.openaiModel,
-  capabilities: ['sse', 'agent-loop', 'tool-policy', 'mcp-client', 'memory', 'pgvector-rag', 'web-search', 'image-search', 'isolated-sandbox', 'trace', 'eval-suite'],
+  capabilities: ['sse', 'agent-loop', 'tool-policy', 'mcp-client', 'memory', 'pgvector-rag', 'web-search', 'image-search', 'presentation-generation', 'isolated-sandbox', 'trace', 'eval-suite'],
   platformDatabase: 'ready',
 }));
 app.get('/api/v1/platform/health', async () => ok({

@@ -52,6 +52,8 @@ function answerFromDeterministicTools(toolCalls) {
   const web = toolCalls.find((call) => call.name === 'web_search' && call.status === 'complete');
   const images = toolCalls.find((call) => call.name === 'image_search' && call.status === 'complete');
   const sandbox = toolCalls.find((call) => call.name === 'sandbox_javascript' && call.status === 'complete');
+  const presentation = toolCalls.find((call) => call.name === 'generate_presentation' && call.status === 'complete');
+  if (presentation) return `PPT 已生成。\n\n${presentation.result.output}`;
   if (images && toolCalls.length === 1) {
     try {
       const source = JSON.parse(images.result.output);

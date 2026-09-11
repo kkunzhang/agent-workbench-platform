@@ -66,6 +66,10 @@ SearXNG 是本地的聚合器，不需要搜索 API Key，但它会访问公开�
 
 示例：`沙盒运行 JavaScript：input.values.reduce((sum, value) => sum + value, 0)`。生产多租户场景应改用 gVisor、Kata 或 Firecracker 等更强隔离方案，并把 `SANDBOX_RUNNER_TOKEN` 交给密钥管理服务；Node `vm` 本身不是安全边界。
 
+### PPT 文件生成
+
+用户请求“生成 PPT”时，运行时会调用本地 `generate_presentation` 工具。工具使用 `pptxgenjs` 生成 `.pptx`，并返回 15 分钟有效的签名下载链接；这条链路不依赖 Ollama 或 OpenAI 是否原生支持文件输出。当前版本生成可直接编辑的五页基础演示稿，模型可用于先扩写主题、数据和文案，再交由该工具落盘。详见 [PPT 生成工具](docs/presentation-generation.md)。
+
 ## 本机模型与 OpenAI 兼容模型
 
 默认使用 Ollama：
@@ -95,6 +99,7 @@ OPENAI_MODEL=gpt-4.1-mini
 - [面试演示提纲](docs/interview-playbook.md)
 - [面试口述要点](docs/interview-speaking-points.md)
 - [联网搜索与沙盒](docs/day-6-harness-and-evaluation.md)
+- [PPT 文件生成](docs/presentation-generation.md)
 - [旧 Vue 前端兼容与迁移范围](docs/frontend-compatibility.md)
 
 旧版 Vue 前端可通过 `npm run dev:agent` 启动本地 Agent 模式；平台 V1 API 使用 Bearer Token，是给新展示页或后续前端适配使用的正式接口。

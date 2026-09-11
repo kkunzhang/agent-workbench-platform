@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import path from 'node:path';
 
 export const config = {
   port: Number(process.env.PORT || 8788),
@@ -19,6 +20,8 @@ export const config = {
   sandboxBaseUrl: process.env.SANDBOX_BASE_URL || 'http://127.0.0.1:8790',
   sandboxRunnerToken: process.env.SANDBOX_RUNNER_TOKEN || '',
   sandboxTimeoutMs: Number(process.env.SANDBOX_TIMEOUT_MS || 3_000),
+  artifactDir: process.env.ARTIFACT_DIR || path.resolve(process.cwd(), 'artifacts'),
+  artifactLinkTtlSeconds: Number(process.env.ARTIFACT_LINK_TTL_SECONDS || 900),
   traceRetention: Number(process.env.TRACE_RETENTION || 200),
   databaseUrl: process.env.DATABASE_URL || '',
   jwtSecret: process.env.JWT_SECRET || 'replace-this-demo-secret-before-production',
