@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { runAgent } from '../services/agentService.js';
 import { requirePermission } from './identity.js';
 import { persistMemory, retrieveKnowledge, retrieveMemories } from './contextService.js';
+import { getDynamicMcpTools } from '../services/mcpRegistry.js';
 
 const listQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -95,7 +96,7 @@ function eventToStep(event, sequence) {
   return { sequence, kind: 'planning', name: 'progress', status: 'completed', input: {}, output: { content: content?.content || '' }, durationMs: null };
 }
 
-export async function registerChatRoutes(app, { database }) {
+export async function registerChatRoutes(app, { database, config, runStore }) {
   const activeRuns = new Map();
   app.get('/api/v1/agents', { preHandler: requirePermission('agent:read') }, async () => {
     const result = await database.query(`
@@ -240,6 +241,7 @@ export async function registerChatRoutes(app, { database }) {
       VALUES ($1, $2, $3, $4, 'running', $5, $6, now()) RETURNING id
     `, [session.id, request.user.sub, agent.id, input.input, agent.modelProvider, agent.modelKey]);
     const runId = createdRun.rows[0].id;
+    await runStore?.begin({ id: runId, sessionId: session.id, userId: request.user.sub, status: 'running' });
     let knowledgeContext = [];
     let memoryContext = [];
     try {
@@ -259,6 +261,7 @@ export async function registerChatRoutes(app, { database }) {
     let sequence = 0;
     const startedAt = Date.now();
     try {
+      const mcpTools = await getDynamicMcpTools({ database, userId: request.user.sub, secret: config.jwtSecret, runStore });
       if (knowledgeContext.length) {
         const retrievalStep = {
           sequence: ++sequence,
@@ -283,8 +286,11 @@ export async function registerChatRoutes(app, { database }) {
         });
       }
       for await (const event of runAgent({
-        account: request.user.sub,
         question: input.input,
+        systemPrompt: agent.systemPrompt,
+        modelProvider: agent.modelProvider,
+        modelHint: agent.modelKey,
+        maxSteps: agent.maxSteps,
         skillNames: input.skillNames,
         images: input.images,
         sessionId: session.id,
@@ -292,6 +298,9 @@ export async function registerChatRoutes(app, { database }) {
         knowledgeContext,
         memoryContext,
         rememberMemory: (content) => persistMemory(database, request.user.sub, content),
+        mcpTools,
+        runStore,
+        runId,
       })) {
         const content = event.contents?.[0];
         if (content?.type === 0 && content.history) answer += content.content;
@@ -301,6 +310,7 @@ export async function registerChatRoutes(app, { database }) {
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         `, [runId, step.sequence, step.kind, step.name, step.status, JSON.stringify(step.input), JSON.stringify(step.output), step.durationMs]);
         writeSse(reply, { ...event, platformRunId: runId, sessionId: session.id, seq: sequence });
+        await runStore?.event(runId, sequence, event);
       }
       if (controller.signal.aborted) throw Object.assign(new Error('执行已取消'), { code: 'RUN_CANCELLED' });
       await database.query("INSERT INTO messages (session_id, role, plain_text, model_name) VALUES ($1, 'assistant', $2, $3)", [session.id, answer, agent.modelKey]);
@@ -316,6 +326,7 @@ export async function registerChatRoutes(app, { database }) {
       writeSse(reply, { resultType: 'agent', msgStatus: 'FINISHED', platformRunId: runId, sessionId: session.id, contents: [{ type: 0, history: true, content: cancelled ? '本轮执行已取消。' : `本轮执行失败：${error.message}` }] });
     } finally {
       activeRuns.delete(runId);
+      await runStore?.finish(runId);
     }
     reply.raw.end();
     return undefined;
@@ -329,6 +340,7 @@ export async function registerChatRoutes(app, { database }) {
     if (!['queued', 'running'].includes(run.rows[0].status)) return ok({ id: runId, cancelled: false, status: run.rows[0].status });
     const active = activeRuns.get(runId);
     active?.controller.abort(new Error('用户取消执行'));
+    await runStore?.cancel(runId);
     await database.query("UPDATE agent_runs SET status = 'cancelled', error_code = 'RUN_CANCELLED', error_message = '用户取消执行', completed_at = now() WHERE id = $1 AND status IN ('queued', 'running')", [runId]);
     await audit(database, request.user.sub, 'agent.run.cancel', 'run', runId);
     return ok({ id: runId, cancelled: true, status: 'cancelled' });

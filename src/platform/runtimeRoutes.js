@@ -2,6 +2,9 @@ import { createHash, randomBytes, createCipheriv, createDecipheriv } from 'node:
 import { z } from 'zod';
 import { embed } from '../services/modelClient.js';
 import { listMcpTools } from '../services/mcpClient.js';
+import { getDynamicMcpTools } from '../services/mcpRegistry.js';
+import { extractDocumentText } from '../services/documentParser.js';
+import { storeKnowledgeFile } from '../services/objectStorage.js';
 import { runEvalSuite } from '../services/evalSuiteService.js';
 import { requirePermission } from './identity.js';
 
@@ -58,7 +61,7 @@ async function getOwnedKnowledgeBase(database, id, userId) {
   return result.rows[0] || null;
 }
 
-export async function registerRuntimeRoutes(app, { database, config }) {
+export async function registerRuntimeRoutes(app, { database, config, runStore }) {
   app.get('/api/v1/traces', { preHandler: requirePermission('trace:read') }, async (request, reply) => {
     const query = parse(listQuerySchema, request.query, reply);
     if (!query) return;
@@ -173,6 +176,39 @@ export async function registerRuntimeRoutes(app, { database, config }) {
     return reply.code(201).send(ok({ ...updated.rows[0], chunkCount: chunks.length }));
   });
 
+  app.post('/api/v1/knowledge-bases/:id/documents/file', { preHandler: requirePermission('knowledge:manage') }, async (request, reply) => {
+    const knowledgeBaseId = parseId(request.params.id, reply);
+    if (!knowledgeBaseId) return;
+    const knowledgeBase = await getOwnedKnowledgeBase(database, knowledgeBaseId, request.user.sub);
+    if (!knowledgeBase) return reply.code(404).send({ code: 404, status: false, message: '知识库不存在' });
+    const upload = await request.file();
+    if (!upload) return reply.code(422).send({ code: 422, status: false, message: '请使用 multipart/form-data 上传 file 字段' });
+    const buffer = await upload.toBuffer();
+    const fileName = String(upload.filename || 'upload').slice(0, 255);
+    const mimeType = upload.mimetype || 'application/octet-stream';
+    let document;
+    try {
+      const content = await extractDocumentText({ buffer, mimeType, fileName });
+      if (!content.trim()) throw new Error('文件未解析出可检索文本');
+      const storageKey = `knowledge/${request.user.sub}/${knowledgeBase.id}/${crypto.randomUUID()}-${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+      await storeKnowledgeFile({ key: storageKey, body: buffer, mimeType });
+      document = await database.query(`INSERT INTO knowledge_documents (knowledge_base_id, file_name, storage_key, mime_type, content, status)
+        VALUES ($1, $2, $3, $4, $5, 'processing') RETURNING id`, [knowledgeBase.id, fileName, storageKey, mimeType, content]);
+      const chunks = splitContent(content);
+      for (let index = 0; index < chunks.length; index += 1) {
+        const vector = await embed(chunks[index]);
+        await database.query(`INSERT INTO knowledge_chunks (document_id, chunk_index, content, embedding, metadata)
+          VALUES ($1, $2, $3, $4::vector, $5)`, [document.rows[0].id, index, chunks[index], vector ? toVectorLiteral(vector) : null, JSON.stringify({ charLength: chunks[index].length, source: 'minio' })]);
+      }
+      const updated = await database.query(`UPDATE knowledge_documents SET status = 'ready', updated_at = now() WHERE id = $1
+        RETURNING id, file_name AS "fileName", storage_key AS "storageKey", status`, [document.rows[0].id]);
+      return reply.code(201).send(ok({ ...updated.rows[0], chunkCount: chunks.length }));
+    } catch (error) {
+      if (document?.rows?.[0]?.id) await database.query("UPDATE knowledge_documents SET status = 'failed', updated_at = now() WHERE id = $1", [document.rows[0].id]);
+      throw error;
+    }
+  });
+
   app.get('/api/v1/knowledge-bases/:id/search', { preHandler: requirePermission('agent:read') }, async (request, reply) => {
     const knowledgeBaseId = parseId(request.params.id, reply);
     if (!knowledgeBaseId) return;
@@ -219,7 +255,26 @@ export async function registerRuntimeRoutes(app, { database, config }) {
     return reply.code(201).send(ok(result.rows[0]));
   });
 
-  app.get('/api/v1/mcp/demo/tools', { preHandler: requirePermission('agent:read') }, async () => ok(await listMcpTools()));
+  app.get('/api/v1/mcp/tools', { preHandler: requirePermission('agent:read') }, async (request) => ok(await getDynamicMcpTools({ database, userId: request.user.sub, secret: config.jwtSecret, runStore })));
+
+  app.post('/api/v1/mcp/servers/:id/refresh', { preHandler: requirePermission('mcp:manage') }, async (request, reply) => {
+    const id = parseId(request.params.id, reply);
+    if (!id) return;
+    const row = await database.query('SELECT id, name, transport, config FROM mcp_servers WHERE id = $1 AND (owner_id IS NULL OR owner_id = $2)', [id, request.user.sub]);
+    if (!row.rowCount) return reply.code(404).send({ code: 404, status: false, message: 'MCP Server 不存在' });
+    const server = { ...row.rows[0], config: decryptConfig(row.rows[0].config, config.jwtSecret) };
+    try {
+      const tools = await listMcpTools(server);
+      await runStore?.cacheMcpTools(id, tools);
+      await database.query("UPDATE mcp_servers SET status = 'connected', updated_at = now() WHERE id = $1", [id]);
+      await database.query('DELETE FROM mcp_tools WHERE server_id = $1', [id]);
+      for (const tool of tools) await database.query('INSERT INTO mcp_tools (server_id, name, description, input_schema) VALUES ($1, $2, $3, $4)', [id, tool.name, tool.description || '', JSON.stringify(tool.inputSchema || {})]);
+      return ok({ serverId: id, tools });
+    } catch (error) {
+      await database.query("UPDATE mcp_servers SET status = 'error', updated_at = now() WHERE id = $1", [id]);
+      throw error;
+    }
+  });
 
   app.get('/api/v1/evaluations/cases', { preHandler: requirePermission('trace:read') }, async () => {
     const result = await database.query('SELECT id, name, input, expected, enabled, created_at AS "createdAt" FROM evaluation_cases ORDER BY name');

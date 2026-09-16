@@ -14,12 +14,33 @@ const tools = [
   { name: 'image_search', description: '通过本地 SearXNG 联网搜索公开图片并返回图片 URL 与来源页', input: { query: 'string', limit: 'number' }, policy: { sideEffect: false, network: true, timeoutMs: 10_000 } },
   { name: 'sandbox_javascript', description: '在受限、无外网的容器中执行单个 JavaScript 表达式', input: { code: 'string', input: 'object' }, policy: { sideEffect: false, sandbox: 'required', network: false, timeoutMs: 3_000 } },
   { name: 'generate_presentation', description: '生成可下载的 PowerPoint（.pptx）演示文稿', input: { request: 'string' }, policy: { sideEffect: true, timeoutMs: 20_000 } },
-  { name: 'mcp_echo', description: '通过 stdio MCP Client 调用本地 MCP 回显工具', input: { text: 'string' }, policy: { sideEffect: false, timeoutMs: 5000 } },
-  { name: 'mcp_add', description: '通过 stdio MCP Client 调用本地 MCP 加法工具', input: { left: 'number', right: 'number' }, policy: { sideEffect: false, timeoutMs: 5000 } },
 ];
 
-export function listTools() {
-  return tools;
+function dynamicMcpTools(mcpTools = []) {
+  return mcpTools.map((item) => ({
+    name: item.name,
+    description: `[MCP:${item.serverName}] ${item.description || item.toolName}`,
+    input: item.inputSchema || { type: 'object', properties: {} },
+    policy: { sideEffect: false, timeoutMs: 10_000, mcp: true },
+    mcp: item,
+  }));
+}
+
+export function listTools({ mcpTools = [] } = {}) {
+  return [...tools, ...dynamicMcpTools(mcpTools)];
+}
+
+export function modelToolDefinitions(options = {}) {
+  return listTools(options).map((tool) => ({
+    type: 'function',
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.input?.type === 'object'
+        ? tool.input
+        : { type: 'object', properties: Object.fromEntries(Object.entries(tool.input || {}).map(([name, type]) => [name, { type }])) },
+    },
+  }));
 }
 
 export function parseNumberExpression(expression) {
@@ -107,6 +128,14 @@ function withTimeout(task, timeoutMs, label) {
   ]);
 }
 
+export async function retryOperation(operation, retryCount = config.toolRetryCount) {
+  let latestError;
+  for (let attempt = 0; attempt <= Number(retryCount); attempt += 1) {
+    try { return await operation(attempt + 1); } catch (error) { latestError = error; }
+  }
+  throw latestError;
+}
+
 async function executeOnce(call, context) {
   if (call.name === 'get_current_time') return new Date().toLocaleString('zh-CN', { hour12: false });
   if (call.name === 'calculate') return String(parseNumberExpression(call.args.expression));
@@ -130,28 +159,22 @@ async function executeOnce(call, context) {
     const artifact = await generatePresentation(call.args.request);
     return `已生成《${artifact.topic}》PPT。\n下载： [${artifact.fileName}](${artifact.downloadPath})\n链接有效期：${config.artifactLinkTtlSeconds} 秒。`;
   }
-  if (call.name === 'mcp_echo') return callMcpTool('echo', { text: call.args.text });
-  if (call.name === 'mcp_add') return callMcpTool('add', call.args);
+  const definition = listTools({ mcpTools: context.mcpTools }).find((item) => item.name === call.name);
+  if (definition?.mcp) return callMcpTool({ server: definition.mcp.server, toolName: definition.mcp.toolName, args: call.args });
   throw new Error(`未知工具：${call.name}`);
 }
 
-export async function executeTool(call, context) {
-  const definition = tools.find((item) => item.name === call.name);
+export async function executeTool(call, context = {}) {
+  const definition = listTools({ mcpTools: context.mcpTools }).find((item) => item.name === call.name);
   if (!definition) throw new Error(`未注册工具：${call.name}`);
   const retryCount = Number(context.retryCount ?? config.toolRetryCount);
-  let latestError;
-  for (let attempt = 0; attempt <= retryCount; attempt += 1) {
-    try {
+  return retryOperation(async (attempt) => {
       const startedAt = Date.now();
       const result = await withTimeout(
         () => executeOnce(call, context),
         definition.policy.timeoutMs || config.toolTimeoutMs,
         definition.name,
       );
-      return { output: String(result), attempt: attempt + 1, durationMs: Date.now() - startedAt, policy: definition.policy };
-    } catch (error) {
-      latestError = error;
-    }
-  }
-  throw latestError;
+      return { output: String(result), attempt, durationMs: Date.now() - startedAt, policy: definition.policy };
+  }, retryCount);
 }

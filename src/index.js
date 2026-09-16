@@ -1,10 +1,12 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyJwt from '@fastify/jwt';
+import multipart from '@fastify/multipart';
 import { config } from './config.js';
 import { runAgent } from './services/agentService.js';
 import { listTools } from './services/toolService.js';
-import { listMcpTools, closeMcpClient } from './services/mcpClient.js';
+import { closeMcpClient } from './services/mcpClient.js';
+import { getDynamicMcpTools } from './services/mcpRegistry.js';
 import { listKnowledge } from './services/knowledgeService.js';
 import { runEvalSuite } from './services/evalSuiteService.js';
 import { createDatabase } from './platform/database.js';
@@ -13,6 +15,8 @@ import { registerChatRoutes } from './platform/chatRoutes.js';
 import { registerRuntimeRoutes } from './platform/runtimeRoutes.js';
 import { registerArtifactRoutes } from './platform/artifactRoutes.js';
 import { persistMemory, retrieveKnowledge, retrieveMemories } from './platform/contextService.js';
+import { createRunStore } from './platform/runStore.js';
+import { recoverInterruptedRuns } from './platform/runRecovery.js';
 
 const app = Fastify({ logger: true });
 const robotId = 900001;
@@ -21,12 +25,16 @@ if (!config.databaseUrl) throw new Error('DATABASE_URL 必须配置；平台不�
 
 await app.register(cors, { origin: true });
 await app.register(fastifyJwt, { secret: config.jwtSecret });
+await app.register(multipart, { limits: { fileSize: 20 * 1024 * 1024, files: 1 } });
 
 const database = createDatabase(config.databaseUrl);
 await database.ping();
+const runStore = createRunStore({ url: config.redisUrl, keyPrefix: config.redisKeyPrefix, logger: app.log });
+await runStore.connect();
+await recoverInterruptedRuns(database);
 await registerIdentityRoutes(app, { database, config });
-await registerChatRoutes(app, { database });
-await registerRuntimeRoutes(app, { database, config });
+await registerChatRoutes(app, { database, config, runStore });
+await registerRuntimeRoutes(app, { database, config, runStore });
 await registerArtifactRoutes(app);
 const compatibilityUser = await ensureDemoUser(database, config);
 const legacyActiveRuns = new Map();
@@ -36,7 +44,8 @@ function limit(value, fallback = 30) { return Math.min(Math.max(Number(value) ||
 function writeSse(reply, payload) { reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`); }
 
 async function defaultAgent() {
-  const result = await database.query('SELECT id FROM agents WHERE enabled = true ORDER BY created_at ASC LIMIT 1');
+  const result = await database.query(`SELECT agents.id, agents.system_prompt AS "systemPrompt", agents.max_steps AS "maxSteps", ai_models.provider AS "modelProvider", ai_models.model_key AS "modelKey"
+    FROM agents LEFT JOIN ai_models ON ai_models.id = agents.model_id WHERE agents.enabled = true ORDER BY agents.created_at ASC LIMIT 1`);
   if (!result.rowCount) throw new Error('没有可用 Agent，请先执行数据库迁移');
   return result.rows[0];
 }
@@ -171,11 +180,13 @@ app.get('/health', async () => ({
   ok: true,
   provider: config.llmProvider,
   model: config.llmProvider === 'ollama' ? config.ollamaModel : config.openaiModel,
-  capabilities: ['sse', 'agent-loop', 'tool-policy', 'mcp-client', 'memory', 'pgvector-rag', 'web-search', 'image-search', 'presentation-generation', 'isolated-sandbox', 'trace', 'eval-suite'],
+  capabilities: ['true-llm-streaming', 'model-tool-loop', 'redis-run-state', 'dynamic-mcp', 'minio-pgvector-rag', 'memory', 'web-search', 'image-search', 'presentation-generation', 'isolated-sandbox', 'trace', 'eval-suite'],
   platformDatabase: 'ready',
 }));
 app.get('/api/v1/platform/health', async () => ok({
   database: 'ready',
+  redis: { configured: Boolean(runStore.available), url: config.redisUrl },
+  objectStorage: { provider: 'minio', bucket: config.minioBucket, endpoint: config.minioEndpoint },
   identity: true,
   storage: 'postgresql-pgvector',
   webSearch: { provider: config.webSearchProvider, endpoint: config.searxngBaseUrl },
@@ -189,7 +200,7 @@ app.get('/api/lab/lessons', async () => ok([
   { day: 4, topic: 'Context 与 Memory' }, { day: 5, topic: 'Subagent 与 Multi-Agent' }, { day: 6, topic: 'Harness Engineering 与评测' }, { day: 7, topic: '综合验收' },
 ]));
 app.get('/api/lab/tools', async () => ok(listTools()));
-app.get('/api/lab/mcp/tools', async () => ok(await listMcpTools()));
+app.get('/api/lab/mcp/tools', async () => ok(await getDynamicMcpTools({ database, userId: compatibilityUser.id, secret: config.jwtSecret, runStore })));
 app.get('/api/lab/knowledge', async () => ok(listKnowledge()));
 app.get('/api/lab/traces', async (request) => ok(await compatibilityTraces(limit(request.query.limit, 12))));
 app.get('/api/lab/traces/:id', async (request, reply) => {
@@ -232,6 +243,7 @@ async function stopLegacyRun(request) {
   if (!active) return ok({ stopped: false, message: '没有正在执行的消息' });
   if (active.userId !== request.compatibilityUserId) return ok({ stopped: false, message: '没有正在执行的消息' });
   active.controller.abort(new Error('用户停止生成'));
+  await runStore.cancel(active.runId);
   return ok({ stopped: true, runId: active.runId });
 }
 app.post('/api/v3/robot/stop', stopLegacyRun);
@@ -403,6 +415,7 @@ app.post('/api/v3/robot/run', async (request, reply) => {
     VALUES ($1, $2, $3, $4, 'running', $5, $6, now()) RETURNING id
   `, [session.id, userId, agent.id, question, config.llmProvider, config.llmProvider === 'ollama' ? config.ollamaModel : config.openaiModel]);
   const runId = createdRun.rows[0].id;
+  await runStore.begin({ id: runId, sessionId: session.id, userId, status: 'running' });
   const streamMessageId = body.msgId || crypto.randomUUID();
   const controller = new AbortController();
   legacyActiveRuns.set(streamMessageId, { controller, runId, userId });
@@ -412,6 +425,7 @@ app.post('/api/v3/robot/run', async (request, reply) => {
   let sequence = 0;
   const startedAt = Date.now();
   try {
+    const mcpTools = await getDynamicMcpTools({ database, userId, secret: config.jwtSecret, runStore });
     let knowledgeContext = [];
     let memoryContext = [];
     try {
@@ -438,20 +452,27 @@ app.post('/api/v3/robot/run', async (request, reply) => {
       });
     }
     for await (const event of runAgent({
-      account: userId,
       question,
+      systemPrompt: agent.systemPrompt,
+      modelProvider: agent.modelProvider,
+      modelHint: agent.modelKey,
+      maxSteps: agent.maxSteps,
       skillNames: body.skillNames || [],
       sessionId: session.id,
       signal: controller.signal,
       knowledgeContext,
       memoryContext,
       rememberMemory: (content) => persistMemory(database, userId, content),
+      mcpTools,
+      runStore,
+      runId,
     })) {
       const content = event.contents?.[0];
       if (content?.type === 0 && content.history) answer += content.content;
       const step = stepFromEvent(event, ++sequence);
       await database.query('INSERT INTO agent_run_steps (run_id, sequence, kind, name, status, input, output) VALUES ($1, $2, $3, $4, $5, $6, $7)', [runId, step.sequence, step.kind, step.name, step.status, JSON.stringify(step.input), JSON.stringify(step.output)]);
       writeSse(reply, { ...event, platformRunId: runId, sessionId: session.id, msgId: streamMessageId, seq: sequence });
+      await runStore.event(runId, sequence, event);
     }
     await database.query("INSERT INTO messages (session_id, role, plain_text) VALUES ($1, 'assistant', $2)", [session.id, answer]);
     await database.query('UPDATE agent_sessions SET updated_at = now() WHERE id = $1', [session.id]);
@@ -462,6 +483,7 @@ app.post('/api/v3/robot/run', async (request, reply) => {
     writeSse(reply, { resultType: 'agent', msgStatus: 'FINISHED', id: crypto.randomUUID(), sessionId: session.id, msgId: streamMessageId, contents: [{ type: 0, history: true, content: cancelled ? '本轮执行已取消。' : `本轮执行失败：${error.message}` }], seq: ++sequence });
   } finally {
     legacyActiveRuns.delete(streamMessageId);
+    await runStore.finish(runId);
   }
   reply.raw.end();
   return undefined;
@@ -473,6 +495,7 @@ app.setErrorHandler((error, request, reply) => {
 });
 app.addHook('onClose', async () => {
   await closeMcpClient();
+  await runStore.close();
   await database.close();
 });
 await app.listen({ port: config.port, host: '127.0.0.1' });

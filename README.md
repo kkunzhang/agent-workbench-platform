@@ -6,7 +6,7 @@
 
 - **A. 身份与权限**：本地注册登录、JWT access/refresh token、角色权限、Demo 登录和审计日志。
 - **B. Agent 对话**：Agent 配置、会话、消息、SSE Run、收藏、反馈、搜索、重命名、置顶和配额数据模型。
-- **C. Agent 运行时**：计划、工具策略、Memory、知识库分块/embedding、MCP 配置、Trace、评测与指标。
+- **C. Agent 运行时**：真实模型流、模型 Tool Calling Loop、Redis Run 状态、动态 MCP、MinIO + pgvector RAG、Trace 与评测。
 
 不包含公司 SSO、企业 OA、工单、云盘以及任何内部业务 Connector。详见 [展示范围](docs/platform-scope.md)。
 
@@ -56,7 +56,7 @@ curl http://127.0.0.1:8788/health
 
 ### 联网搜索与图片搜索
 
-`npm run db:up` 同时启动本机的 SearXNG（仅绑定 `127.0.0.1:8081`）。Agent 收到“联网搜索…”或“搜图片…”时会调用 `web_search` / `image_search`，并把标题、来源页和图片 URL 写入工具 Trace；图片搜索的最终回答会直接带可预览图片和来源链接。
+`npm run db:up` 同时启动本机的 SearXNG（仅绑定 `127.0.0.1:8081`）。模型会根据已注册工具自主决定是否调用 `web_search` / `image_search`，并把标题、来源页和图片 URL 写入工具 Trace；图片搜索的最终回答会直接带可预览图片和来源链接。
 
 SearXNG 是本地的聚合器，不需要搜索 API Key，但它会访问公开搜索引擎，因此运行电脑需要联网。打开 `http://127.0.0.1:8081` 可以单独检查搜索服务。
 
@@ -100,6 +100,7 @@ OPENAI_MODEL=gpt-4.1-mini
 - [面试口述要点](docs/interview-speaking-points.md)
 - [联网搜索与沙盒](docs/day-6-harness-and-evaluation.md)
 - [PPT 文件生成](docs/presentation-generation.md)
+- [运行时五项能力与验收](docs/runtime-completion.md)
 - [旧 Vue 前端兼容与迁移范围](docs/frontend-compatibility.md)
 
 旧版 Vue 前端可通过 `npm run dev:agent` 启动本地 Agent 模式；平台 V1 API 使用 Bearer Token，是给新展示页或后续前端适配使用的正式接口。
@@ -109,6 +110,8 @@ OPENAI_MODEL=gpt-4.1-mini
 ```bash
 npm run check
 npm test
+# 需要已启动 Docker、Ollama 的真实服务验收
+npm run test:integration
 ```
 
 CI 会执行语法检查、单元测试和 Docker Compose 配置校验。
