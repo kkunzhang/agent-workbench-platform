@@ -42,7 +42,9 @@
 
 `images` 最多 4 张、总大小不超过 12MB。Ollama 请求会映射为 `messages[].images`；OpenAI 兼容请求会映射为 `image_url` data URL。图片只用于本次模型调用，不写入对话数据库。
 
-当输入包含“联网搜索 / 搜图片”时，Agent 会执行受限工具：`web_search` 调用本地 SearXNG 并返回网页标题、摘要和来源 URL；`image_search` 返回图片 URL 和来源页。用户明确提出“沙盒运行 JavaScript：…”时，才会执行 `sandbox_javascript`。工具输入、输出摘要、超时与策略均进入 Run Trace。
+请求响应为 `text/event-stream`。模型返回的文本增量使用 `contents[0].type = 0` 且 `history = true`；模型 Tool Calling 的运行、完成和失败事件使用 `contents[0].type = 12`，内容是包含 `ToolName`、`ToolParams`、`ToolStatus`、`ToolResult` 的 JSON。前端必须把 type 12 作为执行状态渲染，不能当普通文本输出。
+
+模型根据工具 JSON Schema 自主决定是否调用 `web_search`、`image_search`、`sandbox_javascript`、PPT、RAG 或动态 MCP 工具。工具输入、输出摘要、超时、重试和最终状态均进入 Run Trace。
 
 ## C. Runtime
 
@@ -54,9 +56,11 @@
 | GET/POST | `/api/v1/knowledge-bases` | 知识库列表与创建。 |
 | GET | `/api/v1/knowledge-bases/:id/documents` | 知识库文档列表。 |
 | POST | `/api/v1/knowledge-bases/:id/documents/text` | 文本分块与 embedding 入库。 |
+| POST | `/api/v1/knowledge-bases/:id/documents/file` | `multipart/form-data` 上传 `file`，支持 TXT、MD、CSV、PDF、DOCX；原件进 MinIO。 |
 | GET | `/api/v1/knowledge-bases/:id/search?query=...` | pgvector 检索；embedding 不可用时回退全文检索。 |
 | GET/POST | `/api/v1/mcp/servers` | MCP Server 配置管理，配置密文存储。 |
-| GET | `/api/v1/mcp/demo/tools` | 枚举真实 stdio Demo MCP 的工具。 |
+| POST | `/api/v1/mcp/servers/:id/refresh` | 连接 Server 执行 `listTools`，同步工具定义与连接状态。 |
+| GET | `/api/v1/mcp/tools` | 获取当前用户可用的动态 MCP 工具列表。 |
 | GET | `/api/v1/evaluations/cases` | 固定评测用例。 |
 | POST | `/api/v1/evaluations/runs` | 运行评测并记录结果。 |
 | GET | `/api/v1/metrics` | Run 数量、平均耗时、P95 耗时。 |
@@ -69,3 +73,29 @@
 - `409`：唯一资源冲突，例如邮箱或 Agent slug 已存在。
 - `422`：请求体不符合 schema。
 - `503`：基础设施不可用，例如 PostgreSQL 未启动。
+
+## D. MCP 配置示例
+
+```json
+{
+  "name": "local-files",
+  "transport": "stdio",
+  "config": {
+    "command": "node",
+    "args": ["/absolute/path/to/mcp-server.js"],
+    "env": { "WORKSPACE": "/absolute/path/to/workspace" }
+  }
+}
+```
+
+提交后调用 `POST /api/v1/mcp/servers/:id/refresh`。HTTP MCP 使用 `transport: "sse"` 或 `"streamable-http"`，配置中提供 `url`。配置密文存储，列表接口只返回是否配置了命令、环境变量数量和 URL，不返回环境变量原文。
+
+## E. 文件 RAG 示例
+
+```bash
+curl -X POST "http://127.0.0.1:8788/api/v1/knowledge-bases/<id>/documents/file" \
+  -H "Authorization: Bearer <accessToken>" \
+  -F "file=@./design.pdf;type=application/pdf"
+```
+
+成功后响应中包含 `storageKey`、`status: "ready"` 与 `chunkCount`。随后可用 `GET /api/v1/knowledge-bases/<id>/search?query=...` 检查检索结果。

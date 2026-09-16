@@ -94,6 +94,7 @@ OPENAI_MODEL=gpt-4.1-mini
 ## API、文档和演示
 
 - [Platform API v1](docs/api-v1.md)
+- [项目总说明：核心实现与设计取舍](docs/project-guide.md)
 - [架构说明](docs/architecture.md)
 - [评测与可观测性](docs/evaluation-and-observability.md)
 - [面试演示提纲](docs/interview-playbook.md)

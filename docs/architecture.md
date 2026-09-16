@@ -1,24 +1,20 @@
 # Agent Workbench Platform 架构
 
+当前运行时采用**模型原生 Tool Calling**：模型接收工具 JSON Schema，自主决定是否调用；平台执行后把 observation 回写模型，直到得到最终回答或达到 `agents.max_steps`。规则 `planningService.js` 只保留给旧教学评测，不参与聊天运行时。
+
 ```text
-Client / Vue Workbench
-        │  JWT + REST / SSE
-        ▼
-Fastify API
-        │
-        ├── Identity / RBAC / Audit ──────────────── PostgreSQL
-        ├── Session / Message / Agent Run ────────── PostgreSQL
-        └── Agent Loop
-              │
-              ├── Planner → Tool policy → Tool / MCP Client
-              ├── Memory retrieval ───────────────── PostgreSQL + pgvector
-              ├── Knowledge retrieval ────────────── PostgreSQL + pgvector
-              ├── Trace / Evaluation ─────────────── PostgreSQL
-              └── Synthesizer ────────────────────── Ollama / OpenAI-compatible
+Vue Workbench ── JWT / REST / SSE ── Fastify API
+                                      │
+                           ┌──────────┼──────────┐
+                           │          │          │
+                   PostgreSQL +     Redis       MinIO
+                     pgvector     短期 Run      原始文件
+                           │
+                    Agent Loop ── Ollama / OpenAI-compatible
+                           │
+            内置工具 / 动态 MCP / SearXNG / 隔离沙盒
 ```
 
-执行计划由 `planningService.js` 创建，最多执行 `AGENT_MAX_STEPS` 个步骤。当前的规则规划器是刻意可审查的基线：它确保演示稳定、工具权限可预测；随后可在不改执行器的前提下替换为模型原生 tool calling。
+PostgreSQL 保存用户、Agent、会话、消息、Run、步骤、权限和向量；Redis 保存取消标记、临时事件和 MCP 工具缓存；MinIO 保存上传原件。服务重启时，遗留 `running` Run 会被标记为 `interrupted`，已有步骤仍可追溯。
 
-每一个工具都有 side-effect、timeout 和 retry 配置。演示工具全部是只读的；若增加写操作，应在 registry 中增加显式审批、幂等键和审计字段，而不是只靠 Prompt 限制。
-
-每轮 Run 会先按当前用户权限从知识库取 Top-K 片段，再把片段和长期记忆加入模型上下文；该检索步骤也会写入 SSE 事件和 `agent_run_steps`，方便从 Trace 检查 RAG 是否实际参与回答。Trace 保存 plan、每个步骤的输入摘要、输出摘要、耗时、状态和评测结果。兼容旧 Vue 的 `/api/v3/robot/*` 接口同样映射到 PostgreSQL + pgvector，数据不再写入本地 JSON 文件。
+完整的模块职责、数据流、关键取舍和排障方式见 [项目总说明](project-guide.md)。
